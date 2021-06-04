@@ -1,0 +1,51 @@
+kind: live
+title: Horovod example
+id: horovod_example
+
+volumes:
+  src:
+    remote: storage:${{ flow.flow_id }}/src
+    mount: /root/app/src
+    local: src
+  results:
+    remote: storage:${{ flow.flow_id }}/results
+    mount: /root/app/results
+
+images:
+  horovod:
+    ref: horovod/horovod:sha-52d0b27
+
+jobs:
+  main:
+    image: ${{ images.horovod.ref }}
+    pass_config: true
+    name: ${{ lower(replace(flow.title, " ", "-")) }}-train
+    volumes:
+      - secret:horovod-id-rsa:/root/.ssh/id_rsa
+      - ${{ upload(volumes.src).ref_ro }}
+    env:
+      PYTHONPATH: ${{ volumes.src.mount}}
+      HOROVOD_TAG: horovod_instance:${{ flow.flow_id }}
+    bash: |
+      python -m pip install -U pip -qq
+      python -m pip install neuro-cli -qq
+      horovodrun \
+        --num-proc 2 --min-np 1 --start-timeout 600 \
+        --host-discovery-script ${{ volumes.src.mount}}/discover-training-hosts.py -p 12345 \
+        python ${{ volumes.src.mount}}/train.py
+
+  secondary:
+    image: ${{ images.horovod.ref }}
+    preset: ${{ params.preset }}
+    multi: true
+    detach: true
+    tags:
+      - horovod_instance:${{ flow.flow_id }}
+    volumes:
+      - ${{ upload(volumes.src).ref_ro }}
+      - secret:horovod-id-rsa-pub:/root/.ssh/authorized_keys
+    params:
+      preset: gpu-small-p
+    bash: |
+      /usr/sbin/sshd -p 12345
+      sleep infinity
